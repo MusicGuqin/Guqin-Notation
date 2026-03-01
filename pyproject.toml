@@ -1,9 +1,10 @@
 [project]
-name = "12306"
+name = "guqin-notation"
 version = "0.1.0"
-description = "Add your description here"
+description = "MusicXML to Guqin Jianzipu (减字谱) converter"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "flask>=3.1.2",
+    "music21>=9.1.0",
 ]

@@ -4,141 +4,256 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicXML 转 古琴谱</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&display=swap"
+          onerror="console.warn('Google Fonts 加载失败, 使用本地字体')">
     <style>
-        /* 复用之前的完美 CSS */
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700&display=swap');
         :root { --paper-color: #f4f1ea; --ink-color: #2b2b2b; }
+        * { box-sizing: border-box; }
         body { font-family: 'Noto Serif SC', "KaiTi", "楷体", serif; background-color: #333; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        
-        .control-panel { background: white; padding: 20px; border-radius: 8px; width: 100%; max-width: 900px; margin-bottom: 20px; display: flex; gap: 20px; }
-        textarea { flex: 1; height: 150px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-family: monospace; font-size: 12px;}
-        .buttons { display: flex; flex-direction: column; gap: 10px; justify-content: center;}
-        button { padding: 10px 20px; background: #8b4513; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold;}
+
+        /* --- 控制面板 --- */
+        .control-panel { background: white; padding: 20px; border-radius: 8px; width: 100%; max-width: 900px; margin-bottom: 20px; }
+        .panel-row { display: flex; gap: 15px; margin-bottom: 10px; }
+        .panel-row:last-child { margin-bottom: 0; }
+        textarea { flex: 1; height: 150px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-family: monospace; font-size: 12px; resize: vertical; }
+        .buttons { display: flex; flex-direction: column; gap: 10px; justify-content: center; min-width: 140px; }
+        button { padding: 10px 18px; background: #8b4513; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 14px; }
         button:hover { background: #a0522d; }
+        button.secondary { background: #666; }
+        button.secondary:hover { background: #888; }
+        .stats { font-size: 13px; color: #666; padding: 8px 0; }
+        .stats span { margin-right: 12px; }
+        .stats .warn { color: #c44; }
 
-        #score-paper { background-color: var(--paper-color); width: 100%; max-width: 900px; min-height: 500px; padding: 50px; box-shadow: 0 0 20px rgba(0,0,0,0.5); display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; }
-        h2.title { width: 100%; text-align: center; margin-bottom: 40px; font-size: 36px; color: var(--ink-color); letter-spacing: 5px; }
+        /* --- 乐谱纸面 --- */
+        #score-paper { background-color: var(--paper-color); width: 100%; max-width: 900px; min-height: 400px; padding: 40px 50px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        h2.title { width: 100%; text-align: center; margin: 0 0 30px 0; font-size: 32px; color: var(--ink-color); letter-spacing: 5px; }
+        #render-area { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; }
 
-        .guqin-note { display: flex; flex-direction: column; align-items: center; width: 55px; margin-bottom: 20px; }
+        /* --- 单个音符单元 --- */
+        .guqin-note { display: flex; flex-direction: column; align-items: center; width: 55px; margin-bottom: 18px; }
         .meta-info { height: 40px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; margin-bottom: 4px; }
-        .jianpu { font-size: 16px; font-weight: 900; color: #555; }
-        .lyric { font-size: 14px; color: #888; margin-top: 2px; }
+        .jianpu { font-size: 15px; font-weight: 900; color: #555; }
+        .lyric { font-size: 13px; color: #888; margin-top: 2px; }
+        .approx-mark { color: #c44; font-size: 10px; }
 
-        .guqin-char { width: 50px; height: 55px; position: relative; display: flex; flex-direction: column; align-items: center; color: var(--ink-color); }
+        /* --- 减字谱方块 (公用) --- */
+        .guqin-char { width: 50px; height: 58px; position: relative; display: flex; flex-direction: column; align-items: center; color: var(--ink-color); }
+
+        /* === 散音布局 === */
         .char-top { font-size: 26px; line-height: 1; height: 14px; transform: scale(1.4, 0.65); margin-bottom: -4px; z-index: 10; }
         .char-bottom { position: relative; width: 100%; height: 40px; display: flex; justify-content: center; }
         .wrapper { font-size: 40px; line-height: 1; font-weight: normal; transform: scale(1, 0.95); }
         .inner { position: absolute; font-size: 13px; font-weight: 900; }
-        
         .layout-tiao .inner { top: 6px; left: 20px; }
         .layout-tiao .wrapper { margin-left: -8px; }
         .layout-gou .inner { top: 14px; left: 50%; transform: translateX(-50%); }
         .layout-gou .wrapper { margin-top: -2px; }
-        
-        .bar-line { width: 1px; height: 100px; background-color: #999; margin: 0 15px; align-self: center; }
+
+        /* === 按音布局 === */
+        .pressed-char { width: 50px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--ink-color); font-weight: bold; }
+        .pressed-hui { font-size: 12px; line-height: 1.2; }
+        .pressed-mid { display: flex; align-items: center; gap: 2px; }
+        .pressed-lh { font-size: 14px; }
+        .pressed-str { font-size: 16px; font-weight: 900; }
+        .pressed-rh { font-size: 22px; line-height: 1; }
+
+        /* === 超出音域 === */
+        .unknown-char { width: 50px; height: 58px; display: flex; align-items: center; justify-content: center; border: 1px dashed #c44; border-radius: 4px; color: #c44; font-size: 11px; text-align: center; }
+
+        /* --- 休止符 --- */
+        .rest-mark { width: 30px; height: 58px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #999; }
+
+        /* --- 小节线 --- */
+        .bar-line { width: 1px; height: 100px; background-color: #999; margin: 0 12px; align-self: center; }
     </style>
 </head>
 <body>
 
     <div class="control-panel">
-        <textarea id="inputData" placeholder="在此粘贴 MusicXML 内容..."></textarea>
-        <div class="buttons">
-            <button onclick="loadDefault()">载入测试文件 (Test1.md)</button>
-            <button onclick="generate()">生成古琴谱</button>
+        <div class="panel-row">
+            <textarea id="inputData" placeholder="在此粘贴 MusicXML 内容，或粘贴旧版 JSON 格式数据..."></textarea>
+            <div class="buttons">
+                <button onclick="loadXianweng()">仙翁操 (JSON)</button>
+                <button onclick="loadDefaultXML()">测试 XML</button>
+                <button onclick="generate()">生成古琴谱</button>
+                <button class="secondary" onclick="loadFile()">上传文件</button>
+                <input type="file" id="fileInput" accept=".xml,.musicxml,.json" style="display:none" onchange="onFileLoaded(event)">
+            </div>
         </div>
+        <div class="stats" id="statsBar"></div>
     </div>
 
     <div id="score-paper">
         <h2 class="title" id="songTitle">古琴谱</h2>
-        <div id="render-area" style="display: flex; flex-wrap: wrap; width: 100%;"></div>
+        <div id="render-area"></div>
     </div>
 
-    <script>
-        // 你提供的 Test1.md 的内容 (MusicXML)
-        const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<script>
+// ---- 默认测试 MusicXML (简化的两小节钢琴) ----
+const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="4.0">
-  <work><work-title>Prev_258.0</work-title></work>
+  <work><work-title>Test Score</work-title></work>
   <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
   <part id="P1">
-    <measure number="1"><note><rest measure="yes"/><duration>8</duration><staff>2</staff></note><backup><duration>8</duration></backup><note><pitch><step>B</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><type>eighth</type><stem>down</stem><staff>1</staff><voice>1</voice></note></measure>
-    <measure number="2"><note><pitch><step>G</step><alter>0</alter><octave>5</octave></pitch><duration>24</duration><type>quarter</type><dot/><stem>down</stem><staff>1</staff><voice>1</voice></note><backup><duration>24</duration></backup><note><pitch><step>E</step><alter>0</alter><octave>2</octave></pitch><duration>8</duration><staff>2</staff></note><note><pitch><step>G</step><alter>0</alter><octave>3</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><pitch><step>B</step><alter>0</alter><octave>3</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>G</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><pitch><step>E</step><alter>0</alter><octave>3</octave></pitch><duration>8</duration><staff>2</staff></note><backup><duration>8</duration></backup><note><pitch><step>G</step><alter>0</alter><octave>5</octave></pitch><duration>8</duration><staff>1</staff></note><note><pitch><step>F</step><alter>0</alter><octave>5</octave></pitch><duration>8</duration><staff>1</staff></note><backup><duration>8</duration></backup><note><pitch><step>A</step><alter>0</alter><octave>3</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>D</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><pitch><step>A</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>C</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><note><chord/><pitch><step>D</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>2</staff></note><backup><duration>8</duration></backup><note><pitch><step>G</step><alter>0</alter><octave>5</octave></pitch><duration>8</duration><staff>1</staff></note><note><pitch><step>E</step><alter>0</alter><octave>2</octave></pitch><duration>8</duration><staff>2</staff></note><backup><duration>8</duration></backup><note><pitch><step>F</step><alter>0</alter><octave>5</octave></pitch><duration>24</duration><staff>1</staff></note><backup><duration>16</duration></backup><note><pitch><step>G</step><alter>0</alter><octave>3</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><note><pitch><step>B</step><alter>0</alter><octave>3</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>G</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><backup><duration>16</duration></backup><note><rest measure="yes"/><duration>16</duration><staff>1</staff></note><note><pitch><step>E</step><alter>0</alter><octave>5</octave></pitch><duration>16</duration><staff>1</staff></note><backup><duration>16</duration></backup><note><pitch><step>D</step><alter>0</alter><octave>2</octave></pitch><duration>8</duration><staff>2</staff></note><note><pitch><step>G</step><alter>0</alter><octave>3</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><backup><duration>16</duration></backup><note><rest measure="yes"/><duration>8</duration><staff>1</staff></note><note><pitch><step>B</step><alter>0</alter><octave>3</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>G</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><note><chord/><pitch><step>E</step><alter>0</alter><octave>4</octave></pitch><duration>16</duration><staff>2</staff></note><backup><duration>16</duration></backup><note><pitch><step>B</step><alter>0</alter><octave>4</octave></pitch><duration>8</duration><staff>1</staff></note></measure>
-    <!-- 为了演示简洁，这里只截取了前两小节，实际你可以粘贴完整的 -->
+    <measure number="1">
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><type>quarter</type></note>
+    </measure>
   </part>
 </score-partwise>`;
 
-        window.onload = loadDefault;
+function loadDefaultXML() {
+    document.getElementById('inputData').value = DEFAULT_XML;
+}
 
-        function loadDefault() {
-            document.getElementById('inputData').value = DEFAULT_XML;
+async function loadXianweng() {
+    try {
+        const res = await fetch('/api/test/xianweng');
+        const text = await res.text();
+        document.getElementById('inputData').value = text;
+    } catch(e) {
+        alert('加载仙翁操数据失败');
+    }
+}
+
+function loadFile() { document.getElementById('fileInput').click(); }
+
+function onFileLoaded(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => { document.getElementById('inputData').value = e.target.result; };
+    reader.readAsText(file);
+}
+
+async function generate() {
+    const inputVal = document.getElementById('inputData').value.trim();
+    if (!inputVal) { alert("内容为空"); return; }
+    document.getElementById('statsBar').textContent = '转换中...';
+
+    try {
+        const response = await fetch('/api/convert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            body: inputVal
+        });
+        const data = await response.json();
+        if (data.error) { alert("后端错误: " + data.error); return; }
+        renderScore(data);
+        showStats(data.stats);
+    } catch (err) {
+        console.error(err);
+        alert("生成失败，请检查后端日志");
+    }
+}
+
+function showStats(s) {
+    if (!s) { document.getElementById('statsBar').textContent = ''; return; }
+    let html = `<span>音符总数: ${s.total}</span>`;
+    html += `<span>散音: ${s.open}</span>`;
+    html += `<span>按音: ${s.pressed}</span>`;
+    if (s.approx) html += `<span class="warn">近似: ${s.approx}</span>`;
+    if (s.unmapped) html += `<span class="warn">超出音域: ${s.unmapped}</span>`;
+    document.getElementById('statsBar').innerHTML = html;
+}
+
+function renderScore(data) {
+    const container = document.getElementById('render-area');
+    const title = document.getElementById('songTitle');
+    container.innerHTML = '';
+    if (data.song_info?.title) title.innerText = data.song_info.title;
+
+    data.render_queue.forEach(item => {
+        // --- 小节线 ---
+        if (item.type === 'bar_line') {
+            const el = document.createElement('div');
+            el.className = 'bar-line';
+            container.appendChild(el);
+            return;
         }
 
-        async function generate() {
-            const inputVal = document.getElementById('inputData').value;
-            if (!inputVal) { alert("内容为空"); return; }
-
-            try {
-                // 直接发送字符串给后端，让后端去判断是 XML 还是 JSON
-                const response = await fetch('/api/convert', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/xml' }, // 标记为 XML 或 text
-                    body: inputVal
-                });
-                const data = await response.json();
-                renderScore(data);
-            } catch (err) {
-                console.error(err);
-                alert("生成失败，请检查后端报错");
-            }
+        // --- 休止符 ---
+        if (item.type === 'rest') {
+            const el = document.createElement('div');
+            el.className = 'rest-mark';
+            el.textContent = '○';
+            container.appendChild(el);
+            return;
         }
 
-        function renderScore(data) {
-            const container = document.getElementById('render-area');
-            const title = document.getElementById('songTitle');
-            container.innerHTML = '';
-            if(data.song_info?.title) title.innerText = data.song_info.title;
+        if (item.type !== 'guqin_char') return;
 
-            data.render_queue.forEach(item => {
-                if (item.type === 'bar_line') {
-                    const line = document.createElement('div');
-                    line.className = 'bar-line';
-                    container.appendChild(line);
-                    return;
-                }
+        const noteDiv = document.createElement('div');
+        noteDiv.className = 'guqin-note';
 
-                if (item.type === 'guqin_char' && item.layout_mode === 'open_string') {
-                    let layoutClass = '';
-                    const wrapper = item.components.bottom_wrapper;
-                    
-                    if (wrapper === '乚') layoutClass = 'layout-tiao';
-                    else if (wrapper === '勹') layoutClass = 'layout-gou';
-
-                    // 如果是空字符（MusicXML里找不到散音的情况），我们可以渲染一个占位符或者只显示简谱
-                    const topChar = item.components.top || "";
-                    const innerChar = item.components.bottom_inner || "";
-                    const wrapperChar = item.components.bottom_wrapper || "";
-
-                    const noteHtml = `
-                        <div class="guqin-note">
-                            <div class="meta-info">
-                                <span class="jianpu">${item.display_info.jianpu}</span>
-                                <span class="lyric">${item.display_info.lyric}</span>
-                            </div>
-                            <div class="guqin-char">
-                                <div class="char-top">${topChar}</div>
-                                <div class="char-bottom ${layoutClass}">
-                                    <span class="wrapper">${wrapperChar}</span>
-                                    <span class="inner">${innerChar}</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = noteHtml;
-                    container.appendChild(tempDiv.firstElementChild);
-                }
-            });
+        // Meta 信息 (简谱 + 歌词)
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'meta-info';
+        let jianpuHtml = `<span class="jianpu">${item.display_info.jianpu || ''}</span>`;
+        if (item.display_info.approx) jianpuHtml += `<span class="approx-mark">≈</span>`;
+        metaDiv.innerHTML = jianpuHtml;
+        if (item.display_info.lyric) {
+            metaDiv.innerHTML += `<span class="lyric">${item.display_info.lyric}</span>`;
         }
-    </script>
+        noteDiv.appendChild(metaDiv);
+
+        // --- 散音布局 ---
+        if (item.layout_mode === 'open_string') {
+            const c = item.components;
+            let layoutClass = '';
+            if (c.bottom_wrapper === '乚') layoutClass = 'layout-tiao';
+            else if (c.bottom_wrapper === '勹') layoutClass = 'layout-gou';
+
+            const charDiv = document.createElement('div');
+            charDiv.className = 'guqin-char';
+            charDiv.innerHTML = `
+                <div class="char-top">${c.top || ''}</div>
+                <div class="char-bottom ${layoutClass}">
+                    <span class="wrapper">${c.bottom_wrapper || ''}</span>
+                    <span class="inner">${c.bottom_inner || ''}</span>
+                </div>`;
+            noteDiv.appendChild(charDiv);
+        }
+
+        // --- 按音布局 ---
+        else if (item.layout_mode === 'pressed') {
+            const c = item.components;
+            const charDiv = document.createElement('div');
+            charDiv.className = 'pressed-char';
+            charDiv.innerHTML = `
+                <div class="pressed-hui">${c.hui || ''}</div>
+                <div class="pressed-mid">
+                    <span class="pressed-lh">${c.left_hand || ''}</span>
+                    <span class="pressed-str">${c.string || ''}</span>
+                </div>
+                <div class="pressed-rh">${c.right_hand || ''}</div>`;
+            noteDiv.appendChild(charDiv);
+        }
+
+        // --- 超出音域 ---
+        else if (item.layout_mode === 'unknown') {
+            const charDiv = document.createElement('div');
+            charDiv.className = 'unknown-char';
+            charDiv.textContent = item.display_info.warning || '?';
+            noteDiv.appendChild(charDiv);
+        }
+
+        container.appendChild(noteDiv);
+    });
+}
+</script>
 </body>
 </html>
