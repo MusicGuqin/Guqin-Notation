@@ -9,6 +9,7 @@ export interface ParsedNote {
   // New structural flags
   isBarline?: boolean; // Display as |
   isDash?: boolean;    // Display as - (for duration extension)
+  isTied?: boolean;    // This note is a tie continuation (don't re-attack)
   
   voice: number;
   staff: number;
@@ -16,6 +17,7 @@ export interface ParsedNote {
   pitchName: string;
   absolutePitch: number;
   startTime: number;
+  beats?: number;      // Duration in quarter-note beats (for dash generation)
   jianpu: JianpuInfo;
 }
 
@@ -70,4 +72,5 @@ export interface GuqinTuning {
   description: string;
   solfege: string; // e.g. "5 6 1 2 3 5 6"
   pitches: number[];
+  fifths: number;  // Key signature in fifths notation (-1=F, 0=C, etc.)
 }

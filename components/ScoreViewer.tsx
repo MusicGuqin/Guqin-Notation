@@ -15,10 +15,13 @@ export const ScoreViewer: React.FC<Props> = ({ notes, tuningName, title }) => {
   const scoreRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // Derive key signature from the first note (rough heuristic) or fallback
-  // In a real app we would pass this from the parser
-  const keySignature = "F"; 
+  // Derive key signature from the tuning's fifths value
+  const FIFTHS_TO_KEY: Record<number, string> = {
+    [-6]: 'Gb', [-5]: 'Db', [-4]: 'Ab', [-3]: 'Eb', [-2]: 'Bb', [-1]: 'F',
+    0: 'C', 1: 'G', 2: 'D', 3: 'A', 4: 'E', 5: 'B', 6: 'F#'
+  };
   const tuningInfo = TUNINGS.find(t => t.name === tuningName);
+  const keySignature = FIFTHS_TO_KEY[tuningInfo?.fifths ?? -1] || 'F';
   const tuningSolfege = tuningInfo?.solfege || "5 6 1 2 3 5 6";
   const tuningDisplay = `1=${keySignature} (${tuningName?.split(' ')[0]}定弦 ${tuningSolfege})`;
 
@@ -98,9 +101,32 @@ export const ScoreViewer: React.FC<Props> = ({ notes, tuningName, title }) => {
         {/* We use flex-wrap with a specific gap to emulate the flow. 
             The parser injects bars and dashes to control spacing. */}
         <div className="flex flex-wrap items-end justify-start gap-y-10 gap-x-0 content-start min-h-[600px]">
-          {notes.map((note, index) => (
-             <JianzipuChar key={index} note={note} />
-          ))}
+          {(() => {
+            // Group chord notes together for combined rendering
+            const elements: React.ReactNode[] = [];
+            let i = 0;
+            while (i < notes.length) {
+              const note = notes[i];
+              // Check if the NEXT note(s) are chord members (same startTime, chord flag)
+              const chordGroup: GuqinNote[] = [note];
+              while (
+                i + 1 < notes.length &&
+                notes[i + 1].originalNote.chord &&
+                !notes[i + 1].originalNote.isBarline &&
+                !notes[i + 1].originalNote.isDash
+              ) {
+                i++;
+                chordGroup.push(notes[i]);
+              }
+              if (chordGroup.length > 1) {
+                elements.push(<JianzipuChar key={i} note={chordGroup[0]} chordNotes={chordGroup} />);
+              } else {
+                elements.push(<JianzipuChar key={i} note={note} />);
+              }
+              i++;
+            }
+            return elements;
+          })()}
           {/* End Bar */}
           <div className="w-[3px] h-[6rem] bg-stone-900 mx-3 self-start mt-2" />
         </div>

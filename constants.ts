@@ -8,21 +8,24 @@ export const TUNINGS: GuqinTuning[] = [
     name: '正调 (Standard)',
     description: 'F Major Pentatonic (1=F)',
     solfege: '5 6 1 2 3 5 6',
-    pitches: [36, 38, 41, 43, 45, 48, 50] 
+    pitches: [36, 38, 41, 43, 45, 48, 50],
+    fifths: -1  // F Major
   },
   {
     id: 'man_jiao',
     name: '慢角 (Man Jiao)',
-    description: 'Slack 3rd String',
+    description: 'Slack 3rd String (1=C)',
     solfege: '1 2 3 5 6 1 2',
-    pitches: [36, 38, 40, 43, 45, 48, 50]
+    pitches: [36, 38, 40, 43, 45, 48, 50],
+    fifths: 0   // C Major
   },
   {
     id: 'ruibin',
     name: '蕤宾 (Ruibin)',
-    description: 'Raise 5th String',
+    description: 'Raise 5th String (1=Bb)',
     solfege: '2 3 5 6 7 2 3',
-    pitches: [36, 38, 41, 43, 46, 48, 50]
+    pitches: [36, 38, 41, 43, 46, 48, 50],
+    fifths: -2  // Bb Major
   },
 ];
 

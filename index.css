@@ -1,0 +1,14 @@
+@font-face {
+  font-family: 'WangJiJianZiPuKaiTi';
+  src: url('/static/fonts/WangJiJianZiPuKaiTi.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.jianzipu-font {
+  font-family: 'WangJiJianZiPuKaiTi', serif;
+  /* Enable all OpenType features the font uses for dynamic composition */
+  font-feature-settings: "liga" 1, "calt" 1, "ccmp" 1, "rlig" 1;
+  -webkit-font-feature-settings: "liga" 1, "calt" 1, "ccmp" 1, "rlig" 1;
+}
