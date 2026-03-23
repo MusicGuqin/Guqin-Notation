@@ -8,6 +8,8 @@ import { GuqinNote, ParsedNote } from './types';
 import { SAMPLE_XML, TUNINGS, DEFAULT_TUNING } from './constants';
 import { FileText, Music, Upload, PlayCircle, Feather, Columns, PanelLeftClose, Settings, Type } from 'lucide-react';
 
+const getSearchParams = () => new URLSearchParams(window.location.search);
+
 const App: React.FC = () => {
   const [xmlInput, setXmlInput] = useState<string>('');
   const [parsedNotes, setParsedNotes] = useState<ParsedNote[]>([]);
@@ -16,6 +18,8 @@ const App: React.FC = () => {
   const [isComparisonMode, setIsComparisonMode] = useState(false);
   const [selectedTuningId, setSelectedTuningId] = useState(DEFAULT_TUNING.id);
   const [scoreTitle, setScoreTitle] = useState("古琴減字譜");
+  const [isEmbedMode] = useState(() => getSearchParams().get('embed') === '1');
+  const [autoPreviewMode] = useState(() => getSearchParams().get('preview') === '1');
 
   // Manually load Google Fonts
   useEffect(() => {
@@ -29,6 +33,42 @@ const App: React.FC = () => {
       })
       .catch((err) => {
         console.warn('Failed to inject local font styles', err);
+      });
+  }, []);
+
+  useEffect(() => {
+    const params = getSearchParams();
+    const requestedTitle = params.get('title');
+    const requestedTuning = params.get('tuning');
+    const xmlPath = params.get('xml');
+    const useSample = params.get('sample') === '1';
+    const showComparison = params.get('compare') === '1';
+
+    if (requestedTitle) setScoreTitle(requestedTitle);
+    if (requestedTuning && TUNINGS.some((t) => t.id === requestedTuning)) {
+      setSelectedTuningId(requestedTuning);
+    }
+    setIsComparisonMode(showComparison);
+
+    if (useSample) {
+      setXmlInput(SAMPLE_XML);
+      handleProcess(SAMPLE_XML);
+      return;
+    }
+
+    if (!xmlPath) return;
+
+    fetch(xmlPath)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load test XML: ${xmlPath}`);
+        return res.text();
+      })
+      .then((xml) => {
+        setXmlInput(xml);
+        handleProcess(xml);
+      })
+      .catch((err) => {
+        console.error(err);
       });
   }, []);
 
@@ -86,6 +126,35 @@ const App: React.FC = () => {
   };
 
   const currentTuning = TUNINGS.find(t => t.id === selectedTuningId) || DEFAULT_TUNING;
+
+  if (isEmbedMode) {
+    return (
+      <div className="min-h-screen w-full overflow-auto bg-white px-4 py-6 text-stone-900 font-serif">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-col items-center">
+          {isComparisonMode && xmlInput ? (
+            <div className="grid w-full grid-cols-1 gap-8 xl:grid-cols-2">
+              <StaffViewer xml={xmlInput} />
+              <ScoreViewer
+                notes={guqinNotes}
+                tuningName={currentTuning.name}
+                title={scoreTitle}
+                hideToolbar
+                autoPreview={autoPreviewMode}
+              />
+            </div>
+          ) : (
+            <ScoreViewer
+              notes={guqinNotes}
+              tuningName={currentTuning.name}
+              title={scoreTitle}
+              hideToolbar
+              autoPreview={autoPreviewMode}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full bg-[#f2f0e9] overflow-hidden text-stone-900 font-serif">

@@ -1,4 +1,4 @@
-import { ParsedNote, JianpuInfo } from '../types';
+import { ParsedNote, JianpuInfo, BeamLevels, BeamSegmentType, TimeModification } from '../types';
 import { Note, Key } from 'tonal';
 
 /**
@@ -10,6 +10,39 @@ const FIFTHS_TO_KEY_NAME: Record<number, string> = {
   0: 'C', 1: 'G', 2: 'D', 3: 'A', 4: 'E', 5: 'B', 6: 'F#',
 };
 
+const VALID_BEAM_TYPES: ReadonlySet<BeamSegmentType> = new Set([
+  'begin',
+  'continue',
+  'end',
+  'forward hook',
+  'backward hook',
+]);
+
+const normalizeBeamType = (rawType: string | null): BeamSegmentType | null => {
+  const normalized = (rawType || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (VALID_BEAM_TYPES.has(normalized as BeamSegmentType)) {
+    return normalized as BeamSegmentType;
+  }
+  return null;
+};
+
+const parseBeamLevels = (noteEl: Element): BeamLevels | undefined => {
+  const beamLevels: BeamLevels = {};
+
+  Array.from(noteEl.querySelectorAll('beam')).forEach((beamEl) => {
+    const numberAttr = beamEl.getAttribute('number');
+    const level = numberAttr ? parseInt(numberAttr, 10) : NaN;
+    if (!Number.isInteger(level) || level < 1) return;
+
+    const beamType = normalizeBeamType(beamEl.textContent);
+    if (!beamType) return;
+
+    beamLevels[level] = beamType;
+  });
+
+  return Object.keys(beamLevels).length > 0 ? beamLevels : undefined;
+};
+
 // New helper to create structural items
 const createStructureItem = (type: 'bar' | 'dash', startTime: number): ParsedNote => ({
   step: '', octave: 0, alter: 0, duration: 0, type: '',
@@ -17,8 +50,51 @@ const createStructureItem = (type: 'bar' | 'dash', startTime: number): ParsedNot
   isBarline: type === 'bar',
   isDash: type === 'dash',
   voice: 0, staff: 0, chord: false, pitchName: '', absolutePitch: 0, startTime,
-  jianpu: { number: '', octave: 0, accidental: '', underlineCount: 0, dot: false }
+  jianpu: { number: '', octave: 0, accidental: '', underlineCount: 0, dot: false, dotCount: 0 }
 });
+
+const UNDERLINE_BY_TYPE: Record<string, number> = {
+  eighth: 1,
+  '16th': 2,
+  '32nd': 3,
+  '64th': 4,
+};
+
+const parseTimeModification = (noteEl: Element): TimeModification | undefined => {
+  const timeEl = noteEl.querySelector('time-modification');
+  if (!timeEl) return undefined;
+
+  const actualNotes = parseInt(timeEl.querySelector('actual-notes')?.textContent || '0', 10);
+  const normalNotes = parseInt(timeEl.querySelector('normal-notes')?.textContent || '0', 10);
+  const normalType = timeEl.querySelector('normal-type')?.textContent || undefined;
+
+  if (actualNotes > 0 && normalNotes > 0) {
+    return { actualNotes, normalNotes, normalType };
+  }
+
+  return undefined;
+};
+
+const deriveUnderlineCount = (noteType: string, beats: number): number => {
+  if (UNDERLINE_BY_TYPE[noteType] != null) {
+    return UNDERLINE_BY_TYPE[noteType];
+  }
+
+  if (beats <= 0) return 0;
+  if (beats <= 0.125) return 4;
+  if (beats <= 0.25) return 3;
+  if (beats <= 0.5) return 2;
+  if (beats <= 1) return 1;
+  return 0;
+};
+
+const getNotatedBeats = (beats: number, timeModification?: TimeModification) => {
+  if (!timeModification || timeModification.actualNotes <= 0 || timeModification.normalNotes <= 0) {
+    return beats;
+  }
+
+  return beats * (timeModification.actualNotes / timeModification.normalNotes);
+};
 
 /**
  * Calculate Jianpu (numbered musical notation) info from a MIDI pitch number.
@@ -26,7 +102,7 @@ const createStructureItem = (type: 'bar' | 'dash', startTime: number): ParsedNot
  */
 const calculateJianpu = (midi: number, fifths: number, isRest: boolean): JianpuInfo => {
   if (isRest) {
-    return { number: '0', octave: 0, accidental: '', underlineCount: 0, dot: false };
+    return { number: '0', octave: 0, accidental: '', underlineCount: 0, dot: false, dotCount: 0 };
   }
 
   // 1. Resolve key from fifths using tonal
@@ -87,7 +163,7 @@ const calculateJianpu = (midi: number, fifths: number, isRest: boolean): JianpuI
     }
   }
 
-  return { number, octave, accidental, underlineCount: 0, dot: false };
+  return { number, octave, accidental, underlineCount: 0, dot: false, dotCount: 0 };
 };
 
 export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
@@ -102,6 +178,8 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
   let measureStartTime = 0;
   let currentFifths = 0; // Default to C
   let currentDivisions = 1; // Persist across measures (MusicXML spec: divisions only appears when changed)
+  let nextBeamGroupId = 1;
+  let activeBeamGroupId = 0;
 
   measures.forEach((measure) => {
     // Get divisions for this measure (update only if present)
@@ -120,6 +198,7 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
     const children = Array.from(measure.children);
     let currentOffset = 0;
     let maxOffset = 0; // Track the furthest point reached in this measure
+    let previousNoteStartTime = measureStartTime;
 
     children.forEach((child) => {
       if (child.tagName === 'note') {
@@ -132,15 +211,27 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
         const voice = parseInt(child.querySelector('voice')?.textContent || '1', 10);
         
         // Dot check
-        const dotNode = child.querySelector('dot');
-        const isDotted = dotNode !== null;
+        const dotCount = child.querySelectorAll('dot').length;
+        const isDotted = dotCount > 0;
         
         const typeNode = child.querySelector('type');
         const noteType = typeNode ? typeNode.textContent : '';
+        const timeModification = parseTimeModification(child);
         
         // Tie detection: <tie type="stop"/> means this note continues a previous tie
         const ties = Array.from(child.querySelectorAll('tie'));
         const isTieStop = ties.some(t => t.getAttribute('type') === 'stop');
+
+        const beamLevels = parseBeamLevels(child);
+        const beam1Type = beamLevels?.[1] ?? '';
+
+        const slurElements = Array.from(child.querySelectorAll('slur'));
+        const hasSlurStart = slurElements.some(s => s.getAttribute('type') === 'start');
+        const hasSlurStop = slurElements.some(s => s.getAttribute('type') === 'stop');
+
+        const tiedElements = Array.from(child.querySelectorAll('tied'));
+        const hasTiedStart = tiedElements.some(t => t.getAttribute('type') === 'start');
+        const hasTiedStop = tiedElements.some(t => t.getAttribute('type') === 'stop');
         
         // Only parse voice 1 (right hand / melody).
         // Left hand (voice 5 in piano scores) is skipped — guqin arrangement
@@ -151,17 +242,20 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
            return;
         }
 
-        // Rhythm Calculation
+        // Rhythm Calculation:
+        // - beats: actual sounded duration in quarter-note units
+        // - notatedBeats: notation-facing duration after reversing tuplet compression
         const quarterDuration = divisions;
-        const beats = duration / quarterDuration; 
-        
-        let underlineCount = 0;
-        if (noteType === 'eighth') underlineCount = 1;
-        else if (noteType === '16th') underlineCount = 2;
-        else if (noteType === '32nd') underlineCount = 3;
-        // Quarters and Halves have 0 underlines
+        const beats = duration / quarterDuration;
+        const notatedBeats = getNotatedBeats(beats, timeModification);
+        const underlineCount = deriveUnderlineCount(noteType || '', notatedBeats);
 
         let noteStartTime = measureStartTime + currentOffset;
+        if (chord) {
+          noteStartTime = previousNoteStartTime;
+        } else {
+          previousNoteStartTime = noteStartTime;
+        }
 
         let noteData: ParsedNote = {
           step: '', octave: 0, alter: 0, duration,
@@ -173,7 +267,9 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
           pitchName: '',
           absolutePitch: 0,
           startTime: noteStartTime,
-          jianpu: { number: '0', octave: 0, accidental: '', underlineCount, dot: isDotted }
+          timeModification,
+          beamLevels,
+          jianpu: { number: '0', octave: 0, accidental: '', underlineCount, dot: isDotted, dotCount }
         };
 
         if (pitch) {
@@ -189,13 +285,15 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
           noteData.jianpu = { 
               ...calculateJianpu(noteData.absolutePitch, currentFifths, false),
               underlineCount,
-              dot: isDotted
+              dot: isDotted,
+              dotCount
           };
         } else if (rest) {
            noteData.jianpu = {
                ...calculateJianpu(0, currentFifths, true),
                underlineCount,
-               dot: isDotted
+               dot: isDotted,
+               dotCount
            };
         }
 
@@ -208,6 +306,21 @@ export const parseMusicXML = (xmlContent: string): ParsedNote[] => {
         if (isTieStop) {
             noteData.isTied = true;
         }
+
+        if (beam1Type === 'begin') {
+            activeBeamGroupId = nextBeamGroupId++;
+            noteData.beamGroupId = activeBeamGroupId;
+        } else if ((beam1Type === 'continue' || beam1Type === 'end') && activeBeamGroupId > 0) {
+            noteData.beamGroupId = activeBeamGroupId;
+            if (beam1Type === 'end') activeBeamGroupId = 0;
+        } else if (beam1Type === 'forward hook' || beam1Type === 'backward hook') {
+            noteData.beamGroupId = nextBeamGroupId++;
+        }
+
+        if (hasSlurStart) noteData.slurStart = true;
+        if (hasSlurStop) noteData.slurStop = true;
+        if (hasTiedStart) noteData.tieStart = true;
+        if (hasTiedStop) noteData.tieStop = true;
 
         notes.push(noteData);
 
@@ -240,7 +353,12 @@ export const recalculateJianpu = (notes: ParsedNote[], fifths: number): ParsedNo
         const j = calculateJianpu(note.absolutePitch, fifths, note.isRest);
         return {
             ...note,
-            jianpu: { ...j, underlineCount: note.jianpu.underlineCount, dot: note.jianpu.dot }
+            jianpu: {
+                ...j,
+                underlineCount: note.jianpu.underlineCount,
+                dot: note.jianpu.dot,
+                dotCount: note.jianpu.dotCount ?? 0
+            }
         };
     });
 };
@@ -290,7 +408,7 @@ export const generateDashes = (notes: ParsedNote[]): ParsedNote[] => {
             const maxBeats = Math.max(...chordGroup.map(n => n.beats ?? 0));
             const totalDashes = Math.max(1, Math.floor(maxBeats));
             for (let d = 0; d < totalDashes; d++) {
-                result.push(createStructureItem('dash', note.startTime));
+                result.push({ ...createStructureItem('dash', note.startTime), dashFromTie: true });
             }
         } else {
             // Push non-tied notes in the chord group

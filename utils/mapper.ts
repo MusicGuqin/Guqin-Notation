@@ -56,12 +56,117 @@ const buildSolfegeMap = (tuning: GuqinTuning): Record<string, number[]> => {
 interface Position {
   string: number;
   hui: string;
+  huiValue: number | null;
   technique: HandTechnique;
   score: number; // Lower is better
 }
 
+const CHINESE_NUMERALS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+};
+
+const parseChineseInteger = (value: string): number | null => {
+  if (!value) return null;
+  if (value === '十') return 10;
+  if (value.startsWith('十')) {
+    const unit = CHINESE_NUMERALS[value.slice(1)];
+    return unit ? 10 + unit : null;
+  }
+  const direct = CHINESE_NUMERALS[value];
+  if (direct) return direct;
+  const chars = value.split('');
+  if (chars.length === 2 && chars[1] === '十') {
+    const tens = CHINESE_NUMERALS[chars[0]];
+    return tens ? tens * 10 : null;
+  }
+  if (chars.length === 3 && chars[1] === '十') {
+    const tens = CHINESE_NUMERALS[chars[0]];
+    const ones = CHINESE_NUMERALS[chars[2]];
+    return tens && ones ? tens * 10 + ones : null;
+  }
+  return null;
+};
+
+const huiToDecimal = (hui: string): number | null => {
+  if (!hui) return null;
+  if (hui === '十三外') return 13.2;
+
+  if (hui.includes('.')) {
+    const [whole, fraction] = hui.split('.');
+    const wholeValue = parseChineseInteger(whole);
+    const fractionValue = parseChineseInteger(fraction);
+    if (wholeValue == null || fractionValue == null) return null;
+    return wholeValue + fractionValue / 10;
+  }
+
+  return parseChineseInteger(hui);
+};
+
+const chooseRightHand = (
+  selected: Position,
+  previousString: number | null,
+  lastRightHand: RightHand,
+  repeatedRightHandCount: number
+): RightHand => {
+  const isLowerRegion = selected.string <= 5;
+  const movingToHigherString = previousString != null ? selected.string > previousString : false;
+  const stringJump = previousString != null ? Math.abs(selected.string - previousString) : 0;
+  const sameStringRepeat = previousString != null && selected.string === previousString;
+
+  const preferredPair: [RightHand, RightHand] = isLowerRegion
+    ? movingToHigherString
+      ? [RightHand.Mo, RightHand.Gou]
+      : [RightHand.Gou, RightHand.Mo]
+    : movingToHigherString
+      ? [RightHand.Tiao, RightHand.Ti]
+      : [RightHand.Ti, RightHand.Tiao];
+
+  if (lastRightHand === RightHand.None) {
+    return preferredPair[0];
+  }
+
+  if (sameStringRepeat && repeatedRightHandCount === 0) {
+    return lastRightHand;
+  }
+
+  if (stringJump >= 2) {
+    return movingToHigherString
+      ? isLowerRegion
+        ? RightHand.Gou
+        : RightHand.Tiao
+      : isLowerRegion
+        ? RightHand.Mo
+        : RightHand.Ti;
+  }
+
+  if (lastRightHand === preferredPair[0] && repeatedRightHandCount >= 1) {
+    return preferredPair[1];
+  }
+
+  if (lastRightHand === preferredPair[0]) {
+    return preferredPair[1];
+  }
+
+  return preferredPair[0];
+};
+
 export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tuning?: GuqinTuning): GuqinNote[] => {
   let lastString = 7; // Default start hint
+  let lastHuiValue: number | null = null;
+  let lastTechnique: HandTechnique = HandTechnique.Empty;
+  let anchorHuiValue: number | null = null;
+  let lastRightHand: RightHand = RightHand.None;
+  let repeatedRightHandCount = 0;
+  let consecutiveSanCount = 0;
 
   // Build dynamic solfege map from the actual tuning
   const activeTuning = tuning || TUNINGS[0];
@@ -85,6 +190,16 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
             string: 0, hui: '', technique: HandTechnique.Empty,
             rightHand: RightHand.None, leftHand: LeftHand.None, isValid: true
         });
+        if (note.isBarline || note.isRest || note.isDash) {
+            lastRightHand = RightHand.None;
+            repeatedRightHandCount = 0;
+            consecutiveSanCount = 0;
+        }
+        if (note.isBarline) {
+            lastTechnique = HandTechnique.Empty;
+            lastHuiValue = null;
+            anchorHuiValue = anchorHuiValue == null ? null : anchorHuiValue * 0.82;
+        }
         continue;
     }
 
@@ -109,14 +224,28 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
              const octaveDiff = Math.abs(midi - openMidi);
              
              if (pitchClassMatch && octaveDiff <= 12) {
-                 // Exact pitch match gets best score; octave-transposed gets slight penalty
-                 const exactMatch = (midi === openMidi) ? 0 : 1;
+                 const exactMatch = midi === openMidi;
                  const dist = Math.abs(strIdx - lastString);
+                 let score = exactMatch ? 1.35 : 6.0;
+                 score += dist * (exactMatch ? 0.26 : 0.52);
+                 if (!exactMatch) score += 0.65;
+                 if (exactMatch && lastTechnique === HandTechnique.An) {
+                     score -= 0.35;
+                 } else if (lastTechnique === HandTechnique.An && anchorHuiValue != null) {
+                     score += 0.85;
+                 }
+                 if (lastTechnique === HandTechnique.San) {
+                     score += 0.55;
+                 }
+                 if (consecutiveSanCount >= 2) {
+                     score += 1.5;
+                 }
                  candidates.push({
                      string: strIdx,
                      hui: '',
+                     huiValue: null,
                      technique: HandTechnique.San,
-                     score: exactMatch + (dist * 0.1) // Near-exact is excellent
+                     score
                  });
              }
         });
@@ -128,7 +257,13 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
         
         // Exact Open String (Backup to Strategy A)
         if (midi === openMidi) {
-             candidates.push({ string: stringNum, hui: '', technique: HandTechnique.San, score: 0 });
+             candidates.push({
+                 string: stringNum,
+                 hui: '',
+                 huiValue: null,
+                 technique: HandTechnique.San,
+                 score: 1.85 + Math.abs(stringNum - lastString) * 0.42 + (consecutiveSanCount >= 2 ? 1.5 : 0)
+             });
         }
         
         // Stopped positions
@@ -136,7 +271,7 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
         if (diff > 0 && diff <= 24) {
              // Find Hui
              let matchedHui = '';
-             let scorePenalty = 10; // Stopped notes are "more work" than open strings for beginner pieces
+             let scorePenalty = 3.4;
              
              if (HUI_OFFSETS[diff]) {
                  matchedHui = HUI_OFFSETS[diff];
@@ -147,16 +282,35 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
                  const closest = offsets.reduce((prev, curr) => Math.abs(curr - diff) < Math.abs(prev - diff) ? curr : prev);
                  if (Math.abs(closest - diff) <= 1) {
                      matchedHui = HUI_OFFSETS[closest];
-                     scorePenalty += 2; // Slight penalty for fuzzy match
+                     scorePenalty += 1.8; // Slight penalty for fuzzy match
                  }
              }
 
              if (matchedHui) {
+                 const huiValue = huiToDecimal(matchedHui);
+                 let score = scorePenalty;
+                 score += Math.abs(stringNum - lastString) * 0.45;
+                 if (huiValue != null && lastHuiValue != null) {
+                     score += Math.abs(huiValue - lastHuiValue) * 0.75;
+                     if (stringNum === lastString) {
+                         const sameStringJump = Math.abs(huiValue - lastHuiValue);
+                         if (sameStringJump >= 1.2) score += 2.0;
+                         if (sameStringJump >= 1.8) score += 4.0;
+                         if (sameStringJump >= 2.4) score += 7.0;
+                     }
+                 }
+                 if (huiValue != null && anchorHuiValue != null) {
+                     score += Math.abs(huiValue - anchorHuiValue) * 0.52;
+                 }
+                 if (lastTechnique === HandTechnique.San) {
+                     score += 0.4;
+                 }
                  candidates.push({
                      string: stringNum,
                      hui: matchedHui,
+                     huiValue,
                      technique: HandTechnique.An,
-                     score: scorePenalty
+                     score
                  });
              }
         }
@@ -172,34 +326,61 @@ export const mapNotesToGuqin = (notes: ParsedNote[], tuningPitches: number[], tu
 
     // If no candidate (weird pitch), fallback to a dummy "An" on string 7 or 1
     if (finalCandidates.length === 0) {
-        finalCandidates.push({ string: 7, hui: '外', technique: HandTechnique.An, score: 999 });
+        finalCandidates.push({ string: 7, hui: '外', huiValue: null, technique: HandTechnique.An, score: 999 });
     }
 
-    const selected = finalCandidates[0];
-    lastString = selected.string;
+    let selected = finalCandidates[0];
+    if (selected.string === lastString && selected.huiValue != null && lastHuiValue != null) {
+        const sameStringJump = Math.abs(selected.huiValue - lastHuiValue);
+        if (sameStringJump >= 2.4) {
+            const alternate = finalCandidates.find(
+                (candidate) =>
+                    candidate.string !== lastString &&
+                    candidate.score <= selected.score + 2 &&
+                    candidate.technique === selected.technique
+            );
+            if (alternate) {
+                selected = alternate;
+            }
+        }
+    }
     chordUsedStrings.add(selected.string);
 
     // --- HAND LOGIC ---
-    let rh = RightHand.Tiao;
-    // Rule: Strings 1-5 usually Gou (inward), Strings 6-7 usually Tiao (outward) for melody, 
-    // but context matters. For "Xian Weng Cao", it alternates.
-    // Simple heuristic: 
-    if (selected.string <= 5) rh = RightHand.Gou;
-    else rh = RightHand.Tiao;
+    const rh = chooseRightHand(selected, lastString, lastRightHand, repeatedRightHandCount);
     
     let lh = LeftHand.None;
     if (selected.technique === HandTechnique.An) {
-        if (selected.hui.includes('十') || selected.hui === '九') {
+        if ((selected.huiValue ?? 0) >= 9) {
             lh = LeftHand.Da; // Thumb for lower positions
+        } else if ((selected.huiValue ?? 0) >= 7) {
+            lh = LeftHand.Ming;
         } else {
-            lh = LeftHand.Ming; // Ring finger for upper positions
+            lh = LeftHand.Zhong;
         }
+    }
+
+    if (rh === lastRightHand) {
+        repeatedRightHandCount += 1;
+    } else {
+        repeatedRightHandCount = 0;
+    }
+    lastRightHand = rh;
+    lastString = selected.string;
+    lastTechnique = selected.technique;
+    lastHuiValue = selected.huiValue;
+    consecutiveSanCount = selected.technique === HandTechnique.San ? consecutiveSanCount + 1 : 0;
+    if (selected.huiValue != null) {
+        anchorHuiValue = anchorHuiValue == null ? selected.huiValue : anchorHuiValue * 0.65 + selected.huiValue * 0.35;
+    } else if (selected.technique === HandTechnique.San && anchorHuiValue != null) {
+        anchorHuiValue *= 0.92;
     }
 
     result.push({
       originalNote: note,
       string: selected.string,
       hui: selected.hui,
+      huiDecimal: selected.huiValue ?? undefined,
       technique: selected.technique,
       rightHand: rh,
       leftHand: lh,
